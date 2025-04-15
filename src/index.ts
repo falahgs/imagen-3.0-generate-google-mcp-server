@@ -42,7 +42,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           outputDir: {
             type: "string",
             description: "Directory to save generated images",
-            default: "G:\\image-gen3-google-mcp-server\\images"
+            default: "./images"
           }
         },
         required: ["prompt"]
@@ -85,11 +85,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         numberOfImages?: number;
         outputDir?: string;
       };
-      const { prompt, numberOfImages = 1, outputDir = "G:\\image-gen3-google-mcp-server\\images" } = args;
+      const { prompt, numberOfImages = 1, outputDir = "./images" } = args;
       
       // Ensure output directory exists
-      if (!fs.existsSync(outputDir)) {
-        fs.mkdirSync(outputDir, { recursive: true });
+      const absoluteOutputDir = path.resolve(process.cwd(), outputDir);
+      if (!fs.existsSync(absoluteOutputDir)) {
+        fs.mkdirSync(absoluteOutputDir, { recursive: true });
       }
 
       const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
@@ -122,7 +123,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         // Create filename with timestamp and sanitized prompt
         const sanitizedPrompt = prompt.toLowerCase().replace(/[^a-z0-9]/g, '-').slice(0, 30);
         const filename = path.join(
-          "G:\\image-gen3-google-mcp-server\\images", 
+          absoluteOutputDir, 
           `${sanitizedPrompt}-${timestamp}-${idx}.png`
         );
         
