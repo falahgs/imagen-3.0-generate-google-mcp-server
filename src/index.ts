@@ -9,6 +9,7 @@ import {
 import { GoogleGenAI } from "@google/genai";
 import * as fs from "node:fs";
 import * as path from "path";
+import * as os from "os";
 
 // Function to normalize file paths for Windows
 function normalizeFilePath(filePath: string): string {
@@ -25,6 +26,27 @@ function normalizeFilePath(filePath: string): string {
   filePath = filePath.replace(/\\\\/g, '\\');
   
   return filePath;
+}
+
+// Function to create temporary directory for images
+async function createTempImageDir(): Promise<string> {
+  const tempBaseDir = path.join(os.tmpdir(), 'mcp-image-gen');
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const tempDir = path.join(tempBaseDir, timestamp);
+  
+  if (!fs.existsSync(tempDir)) {
+    fs.mkdirSync(tempDir, { recursive: true });
+  }
+  
+  return tempDir;
+}
+
+// Function to copy file to temp directory
+async function copyToTemp(sourcePath: string, tempDir: string): Promise<string> {
+  const filename = path.basename(sourcePath);
+  const tempPath = path.join(tempDir, filename);
+  fs.copyFileSync(sourcePath, tempPath);
+  return tempPath;
 }
 
 // Function to ensure directory exists
@@ -98,6 +120,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             type: "number",
             description: "Image height in pixels",
             default: 512
+          },
+          useTemp: {
+            type: "boolean",
+            description: "Whether to copy images to a temp directory",
+            default: true
           }
         },
         required: ["imagePaths"]
@@ -186,11 +213,22 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         imagePaths: string[];
         width?: number;
         height?: number;
+        useTemp?: boolean;
       };
-      const { imagePaths, width = 512, height = 512 } = args;
+      const { imagePaths, width = 512, height = 512, useTemp = true } = args;
 
-      const htmlTags = imagePaths.map(imagePath => {
-        // Normalize the path for Windows
+      let tempDir: string | null = null;
+      let tempPaths: string[] = [];
+
+      if (useTemp) {
+        // Create temp directory and copy images
+        tempDir = await createTempImageDir();
+        tempPaths = await Promise.all(
+          imagePaths.map(imagePath => copyToTemp(normalizeFilePath(imagePath), tempDir!))
+        );
+      }
+
+      const htmlTags = (useTemp ? tempPaths : imagePaths).map(imagePath => {
         const normalizedPath = normalizeFilePath(imagePath);
         return `<img src="file://${normalizedPath}" width="${width}" height="${height}" alt="Generated image" style="margin: 10px;" />`;
       });
@@ -198,7 +236,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       return {
         toolResult: {
           html: htmlTags.join('\n'),
-          message: `Created HTML tags for ${imagePaths.length} images`
+          message: `Created HTML tags for ${imagePaths.length} images`,
+          tempDir: tempDir,
+          tempPaths: tempPaths
         }
       };
     } catch (error) {
