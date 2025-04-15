@@ -10,9 +10,34 @@ import { GoogleGenAI } from "@google/genai";
 import * as fs from "node:fs";
 import * as path from "path";
 
+// Function to normalize file paths for Windows
+function normalizeFilePath(filePath: string): string {
+  // Remove /app/ prefix if present
+  filePath = filePath.replace(/^\/app\//, '');
+  
+  // Convert forward slashes to backslashes for Windows
+  filePath = filePath.replace(/\//g, '\\');
+  
+  // Remove any file:// prefix
+  filePath = filePath.replace(/^file:\/\//, '');
+  
+  // Handle escaped paths (e.g., G:\\path -> G:\path)
+  filePath = filePath.replace(/\\\\/g, '\\');
+  
+  return filePath;
+}
+
+// Function to ensure directory exists
+async function ensureDirectoryExists(dirPath: string): Promise<void> {
+  const normalizedPath = normalizeFilePath(dirPath);
+  if (!fs.existsSync(normalizedPath)) {
+    fs.mkdirSync(normalizedPath, { recursive: true });
+  }
+}
+
 const server = new Server({
   name: "gemini-image-gen",
-  version: "1.0.0",
+  version: "1.1.0",
 }, {
   capabilities: {
     tools: {}
@@ -42,7 +67,12 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           outputDir: {
             type: "string",
             description: "Directory to save generated images",
-            default: "./images"
+            default: "G:\\image-gen3-google-mcp-server\\images"
+          },
+          subDir: {
+            type: "string",
+            description: "Subdirectory within outputDir to save images",
+            default: ""
           }
         },
         required: ["prompt"]
@@ -84,14 +114,19 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         prompt: string;
         numberOfImages?: number;
         outputDir?: string;
+        subDir?: string;
       };
-      const { prompt, numberOfImages = 1, outputDir = "./images" } = args;
+      const { 
+        prompt, 
+        numberOfImages = 1, 
+        outputDir = "G:\\image-gen3-google-mcp-server\\images",
+        subDir = ""
+      } = args;
       
       // Ensure output directory exists
-      const absoluteOutputDir = path.resolve(process.cwd(), outputDir);
-      if (!fs.existsSync(absoluteOutputDir)) {
-        fs.mkdirSync(absoluteOutputDir, { recursive: true });
-      }
+      const baseDir = normalizeFilePath(outputDir);
+      const fullOutputDir = subDir ? path.join(baseDir, subDir) : baseDir;
+      await ensureDirectoryExists(fullOutputDir);
 
       const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
@@ -103,18 +138,19 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         },
       });
 
-      const generatedFiles: string[] = [];
-      let idx = 1;
-      
       if (!response.generatedImages) {
         throw new McpError(2, "No images were generated");
       }
+      
+      const generatedFiles: string[] = [];
+      let idx = 1;
       
       // Get timestamp for unique filenames
       const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
       
       for (const generatedImage of response.generatedImages) {
         if (!generatedImage.image?.imageBytes) {
+          console.warn(`Image ${idx} has no image data, skipping`);
           continue;
         }
         const imgBytes = generatedImage.image.imageBytes;
@@ -123,7 +159,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         // Create filename with timestamp and sanitized prompt
         const sanitizedPrompt = prompt.toLowerCase().replace(/[^a-z0-9]/g, '-').slice(0, 30);
         const filename = path.join(
-          absoluteOutputDir, 
+          fullOutputDir,
           `${sanitizedPrompt}-${timestamp}-${idx}.png`
         );
         
@@ -154,8 +190,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const { imagePaths, width = 512, height = 512 } = args;
 
       const htmlTags = imagePaths.map(imagePath => {
-        const absolutePath = path.resolve(imagePath);
-        return `<img src="file://${absolutePath}" width="${width}" height="${height}" alt="Generated image" style="margin: 10px;" />`;
+        // Normalize the path for Windows
+        const normalizedPath = normalizeFilePath(imagePath);
+        return `<img src="file://${normalizedPath}" width="${width}" height="${height}" alt="Generated image" style="margin: 10px;" />`;
       });
 
       return {
