@@ -11,37 +11,45 @@ import * as fs from "node:fs";
 import * as path from "path";
 import * as os from "os";
 
+// Get the Windows desktop path
+function getWindowsDesktopPath(): string {
+  // Force Windows-style path for the desktop
+  const userProfile = process.env.USERPROFILE || os.homedir();
+  return path.join(userProfile, 'Desktop');
+}
+
 // Get the best storage location based on OS
 function getImageStorageDir(): string {
-  // Save to Desktop on Windows
-  const desktopPath = path.join(os.homedir(), 'Desktop', 'AI-Generated-Images');
+  // Force Windows path
+  const desktopPath = path.join(getWindowsDesktopPath(), 'AI-Generated-Images');
   
   // Log the actual directory being used
-  console.log('Image storage directory:', desktopPath);
+  console.log('Image storage directory (Windows):', desktopPath);
   
   return desktopPath;
 }
 
 // Function to normalize file paths for cross-platform compatibility
 function normalizeFilePath(filePath: string): string {
-  // Remove /app/, /root/, or similar prefixes
+  // Remove /app/, /root/, or similar prefixes and convert to Windows path
   filePath = filePath.replace(/^(\/app\/|\/root\/)/, '');
   
-  // Always use paths relative to Desktop folder
-  const desktopPath = path.join(os.homedir(), 'Desktop', 'AI-Generated-Images');
+  // Always use Windows desktop path
+  const desktopPath = path.join(getWindowsDesktopPath(), 'AI-Generated-Images');
   if (!path.isAbsolute(filePath)) {
     filePath = path.join(desktopPath, filePath);
   }
   
-  // Normalize path separators for current OS
-  return path.normalize(filePath);
+  // Ensure Windows-style path
+  return filePath.replace(/\//g, '\\');
 }
 
 // Function to generate web-friendly path
 function getWebPath(filePath: string): string {
+  // Ensure Windows path format first
+  const windowsPath = normalizeFilePath(filePath);
   // Convert backslashes to forward slashes for web URLs
-  const webPath = filePath.replace(/\\/g, '/');
-  return `file://${webPath}`;
+  return `file://${windowsPath}`;
 }
 
 // Function to ensure directory exists
@@ -140,14 +148,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         category = ""
       } = args;
       
-      // Get Desktop storage directory and create category subdirectory if needed
+      // Get Windows Desktop storage directory
       const baseDir = getImageStorageDir();
       const outputDir = category ? path.join(baseDir, category) : baseDir;
       
       // Ensure output directory exists
       await ensureDirectoryExists(outputDir);
 
-      console.log('Saving images to:', outputDir);
+      console.log('Saving images to (Windows path):', outputDir);
 
       const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
@@ -185,18 +193,25 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         );
         
         await fs.promises.writeFile(filename, buffer);
-        generatedFiles.push(filename);
+        // Ensure Windows path format
+        const windowsPath = filename.replace(/\//g, '\\');
+        generatedFiles.push(windowsPath);
         
-        console.log('Generated image saved at:', filename);
+        console.log('Generated image saved at (Windows path):', windowsPath);
         idx++;
       }
 
+      // Ensure all paths are in Windows format
+      const windowsStorageDir = outputDir.replace(/\//g, '\\');
+      const windowsDesktopPath = path.join(getWindowsDesktopPath(), 'AI-Generated-Images').replace(/\//g, '\\');
+
       return {
         toolResult: {
-          message: `Successfully generated ${generatedFiles.length} images on your Desktop in AI-Generated-Images${category ? '/' + category : ''}`,
+          message: `Successfully generated ${generatedFiles.length} images on your Windows Desktop in AI-Generated-Images${category ? '\\' + category : ''}`,
           files: generatedFiles,
-          storageDir: outputDir,
-          desktopPath: path.join(os.homedir(), 'Desktop', 'AI-Generated-Images')
+          storageDir: windowsStorageDir,
+          desktopPath: windowsDesktopPath,
+          userProfile: process.env.USERPROFILE || os.homedir()
         }
       };
     } catch (error) {
