@@ -13,27 +13,23 @@ import * as os from "os";
 
 // Get the best storage location based on OS
 function getImageStorageDir(): string {
-  if (process.env.MCP_IMAGE_DIR) {
-    return process.env.MCP_IMAGE_DIR;
-  }
-
-  // For Windows: Use Documents folder
-  if (process.platform === 'win32') {
-    return path.join(os.homedir(), 'Documents', 'McpImages');
-  }
-
-  // For Linux/Mac: Use home directory
-  return path.join(os.homedir(), '.mcp-images');
+  // Always use a local directory relative to where the server is running
+  const baseDir = path.join(process.cwd(), 'generated-images');
+  
+  // Log the actual directory being used
+  console.log('Image storage directory:', baseDir);
+  
+  return baseDir;
 }
 
 // Function to normalize file paths for cross-platform compatibility
 function normalizeFilePath(filePath: string): string {
-  // Remove /app/ prefix if present
-  filePath = filePath.replace(/^\/app\//, '');
+  // Remove /app/, /root/, or similar prefixes
+  filePath = filePath.replace(/^(\/app\/|\/root\/)/, '');
   
-  // Convert to absolute path if relative
+  // Always use paths relative to current directory
   if (!path.isAbsolute(filePath)) {
-    filePath = path.resolve(getImageStorageDir(), filePath);
+    filePath = path.join(process.cwd(), 'generated-images', filePath);
   }
   
   // Normalize path separators for current OS
@@ -42,8 +38,10 @@ function normalizeFilePath(filePath: string): string {
 
 // Function to generate web-friendly path
 function getWebPath(filePath: string): string {
+  // Make path relative to current directory
+  const relativePath = path.relative(process.cwd(), filePath);
   // Convert backslashes to forward slashes for web URLs
-  const webPath = filePath.replace(/\\/g, '/');
+  const webPath = relativePath.replace(/\\/g, '/');
   return `file://${webPath}`;
 }
 
@@ -150,6 +148,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       // Ensure output directory exists
       await ensureDirectoryExists(outputDir);
 
+      console.log('Saving images to:', outputDir);
+
       const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
       const response = await ai.models.generateImages({
@@ -186,15 +186,21 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         );
         
         await fs.promises.writeFile(filename, buffer);
-        generatedFiles.push(filename);
+        
+        // Store relative path for better portability
+        const relativePath = path.relative(process.cwd(), filename);
+        generatedFiles.push(relativePath);
+        
+        console.log('Generated image saved at:', relativePath);
         idx++;
       }
 
       return {
         toolResult: {
-          message: `Successfully generated ${generatedFiles.length} images in ${outputDir}`,
+          message: `Successfully generated ${generatedFiles.length} images in ./generated-images${category ? '/' + category : ''}`,
           files: generatedFiles,
-          storageDir: outputDir
+          storageDir: path.relative(process.cwd(), outputDir),
+          absolutePath: outputDir
         }
       };
     } catch (error) {
