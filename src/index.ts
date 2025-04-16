@@ -13,13 +13,13 @@ import * as os from "os";
 
 // Get the best storage location based on OS
 function getImageStorageDir(): string {
-  // Always use a local directory relative to where the server is running
-  const baseDir = path.join(process.cwd(), 'generated-images');
+  // Save to Desktop on Windows
+  const desktopPath = path.join(os.homedir(), 'Desktop', 'AI-Generated-Images');
   
   // Log the actual directory being used
-  console.log('Image storage directory:', baseDir);
+  console.log('Image storage directory:', desktopPath);
   
-  return baseDir;
+  return desktopPath;
 }
 
 // Function to normalize file paths for cross-platform compatibility
@@ -27,9 +27,10 @@ function normalizeFilePath(filePath: string): string {
   // Remove /app/, /root/, or similar prefixes
   filePath = filePath.replace(/^(\/app\/|\/root\/)/, '');
   
-  // Always use paths relative to current directory
+  // Always use paths relative to Desktop folder
+  const desktopPath = path.join(os.homedir(), 'Desktop', 'AI-Generated-Images');
   if (!path.isAbsolute(filePath)) {
-    filePath = path.join(process.cwd(), 'generated-images', filePath);
+    filePath = path.join(desktopPath, filePath);
   }
   
   // Normalize path separators for current OS
@@ -38,10 +39,8 @@ function normalizeFilePath(filePath: string): string {
 
 // Function to generate web-friendly path
 function getWebPath(filePath: string): string {
-  // Make path relative to current directory
-  const relativePath = path.relative(process.cwd(), filePath);
   // Convert backslashes to forward slashes for web URLs
-  const webPath = relativePath.replace(/\\/g, '/');
+  const webPath = filePath.replace(/\\/g, '/');
   return `file://${webPath}`;
 }
 
@@ -141,7 +140,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         category = ""
       } = args;
       
-      // Get base storage directory and create category subdirectory if needed
+      // Get Desktop storage directory and create category subdirectory if needed
       const baseDir = getImageStorageDir();
       const outputDir = category ? path.join(baseDir, category) : baseDir;
       
@@ -186,21 +185,18 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         );
         
         await fs.promises.writeFile(filename, buffer);
+        generatedFiles.push(filename);
         
-        // Store relative path for better portability
-        const relativePath = path.relative(process.cwd(), filename);
-        generatedFiles.push(relativePath);
-        
-        console.log('Generated image saved at:', relativePath);
+        console.log('Generated image saved at:', filename);
         idx++;
       }
 
       return {
         toolResult: {
-          message: `Successfully generated ${generatedFiles.length} images in ./generated-images${category ? '/' + category : ''}`,
+          message: `Successfully generated ${generatedFiles.length} images on your Desktop in AI-Generated-Images${category ? '/' + category : ''}`,
           files: generatedFiles,
-          storageDir: path.relative(process.cwd(), outputDir),
-          absolutePath: outputDir
+          storageDir: outputDir,
+          desktopPath: path.join(os.homedir(), 'Desktop', 'AI-Generated-Images')
         }
       };
     } catch (error) {
