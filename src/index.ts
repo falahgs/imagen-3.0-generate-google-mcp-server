@@ -11,45 +11,73 @@ import * as fs from "node:fs";
 import * as path from "path";
 import * as os from "os";
 
-// Get the Windows desktop path
-function getWindowsDesktopPath(): string {
-  // Force Windows-style path for the desktop
-  const userProfile = process.env.USERPROFILE || os.homedir();
-  return path.join(userProfile, 'Desktop');
+// Get the user's desktop path based on their OS
+function getUserDesktopPath(): string {
+  try {
+    // Try to get the desktop path in a cross-platform way
+    const userHomeDir = os.homedir();
+    
+    if (process.platform === 'win32') {
+      // Windows: Use USERPROFILE environment variable or fallback to homedir
+      return path.join(process.env.USERPROFILE || userHomeDir, 'Desktop');
+    } else if (process.platform === 'darwin') {
+      // macOS
+      return path.join(userHomeDir, 'Desktop');
+    } else {
+      // Linux and others: Check XDG_DESKTOP_DIR first
+      const xdgConfig = path.join(userHomeDir, '.config', 'user-dirs.dirs');
+      if (fs.existsSync(xdgConfig)) {
+        try {
+          const config = fs.readFileSync(xdgConfig, 'utf-8');
+          const match = config.match(/XDG_DESKTOP_DIR="(.+)"/);
+          if (match) {
+            return match[1].replace('$HOME', userHomeDir);
+          }
+        } catch (error) {
+          console.warn('Could not read XDG config:', error);
+        }
+      }
+      // Fallback to standard Desktop directory
+      return path.join(userHomeDir, 'Desktop');
+    }
+  } catch (error) {
+    console.warn('Error getting desktop path:', error);
+    // Fallback to current directory if we can't determine desktop
+    return process.cwd();
+  }
 }
 
-// Get the best storage location based on OS
+// Get the storage location for generated images
 function getImageStorageDir(): string {
-  // Force Windows path
-  const desktopPath = path.join(getWindowsDesktopPath(), 'AI-Generated-Images');
+  const desktopPath = getUserDesktopPath();
+  const storageDir = path.join(desktopPath, 'AI-Generated-Images');
   
-  // Log the actual directory being used
-  console.log('Image storage directory (Windows):', desktopPath);
+  // Log the directory being used
+  console.log(`Storage directory for current OS (${process.platform}):`, storageDir);
   
-  return desktopPath;
+  return storageDir;
 }
 
-// Function to normalize file paths for cross-platform compatibility
+// Function to normalize file paths for the current OS
 function normalizeFilePath(filePath: string): string {
-  // Remove /app/, /root/, or similar prefixes and convert to Windows path
-  filePath = filePath.replace(/^(\/app\/|\/root\/)/, '');
+  // Remove common prefixes that might come from different environments
+  filePath = filePath.replace(/^(\/app\/|\/root\/|\\root\\)/, '');
   
-  // Always use Windows desktop path
-  const desktopPath = path.join(getWindowsDesktopPath(), 'AI-Generated-Images');
+  // Convert to absolute path if relative
   if (!path.isAbsolute(filePath)) {
-    filePath = path.join(desktopPath, filePath);
+    filePath = path.join(getImageStorageDir(), filePath);
   }
   
-  // Ensure Windows-style path
-  return filePath.replace(/\//g, '\\');
+  // Normalize path for current OS
+  return path.normalize(filePath);
 }
 
 // Function to generate web-friendly path
 function getWebPath(filePath: string): string {
-  // Ensure Windows path format first
-  const windowsPath = normalizeFilePath(filePath);
-  // Convert backslashes to forward slashes for web URLs
-  return `file://${windowsPath}`;
+  // Normalize for current OS first
+  const normalizedPath = normalizeFilePath(filePath);
+  // Convert to web URL format (always use forward slashes)
+  return `file://${normalizedPath.replace(/\\/g, '/')}`;
 }
 
 // Function to ensure directory exists
@@ -148,14 +176,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         category = ""
       } = args;
       
-      // Get Windows Desktop storage directory
+      // Get storage directory for current OS
       const baseDir = getImageStorageDir();
       const outputDir = category ? path.join(baseDir, category) : baseDir;
       
       // Ensure output directory exists
       await ensureDirectoryExists(outputDir);
 
-      console.log('Saving images to (Windows path):', outputDir);
+      console.log('Saving images to:', outputDir);
 
       const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
@@ -193,25 +221,20 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         );
         
         await fs.promises.writeFile(filename, buffer);
-        // Ensure Windows path format
-        const windowsPath = filename.replace(/\//g, '\\');
-        generatedFiles.push(windowsPath);
+        generatedFiles.push(normalizeFilePath(filename));
         
-        console.log('Generated image saved at (Windows path):', windowsPath);
+        console.log('Generated image saved at:', filename);
         idx++;
       }
 
-      // Ensure all paths are in Windows format
-      const windowsStorageDir = outputDir.replace(/\//g, '\\');
-      const windowsDesktopPath = path.join(getWindowsDesktopPath(), 'AI-Generated-Images').replace(/\//g, '\\');
-
       return {
         toolResult: {
-          message: `Successfully generated ${generatedFiles.length} images on your Windows Desktop in AI-Generated-Images${category ? '\\' + category : ''}`,
+          message: `Successfully generated ${generatedFiles.length} images in AI-Generated-Images${category ? path.sep + category : ''} on your Desktop`,
           files: generatedFiles,
-          storageDir: windowsStorageDir,
-          desktopPath: windowsDesktopPath,
-          userProfile: process.env.USERPROFILE || os.homedir()
+          storageDir: outputDir,
+          desktopPath: getUserDesktopPath(),
+          osType: process.platform,
+          userHome: os.homedir()
         }
       };
     } catch (error) {
