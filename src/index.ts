@@ -34,26 +34,40 @@ async function createTempImageDir(): Promise<string> {
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
   const tempDir = path.join(tempBaseDir, timestamp);
   
-  if (!fs.existsSync(tempDir)) {
-    fs.mkdirSync(tempDir, { recursive: true });
-  }
+  // Ensure temp directory exists
+  await fs.promises.mkdir(tempDir, { recursive: true });
   
   return tempDir;
 }
 
 // Function to copy file to temp directory
 async function copyToTemp(sourcePath: string, tempDir: string): Promise<string> {
-  const filename = path.basename(sourcePath);
-  const tempPath = path.join(tempDir, filename);
-  fs.copyFileSync(sourcePath, tempPath);
-  return tempPath;
+  try {
+    // Normalize source path
+    const normalizedSource = normalizeFilePath(sourcePath);
+    const filename = path.basename(normalizedSource);
+    const tempPath = path.join(tempDir, filename);
+
+    // Create temp directory if it doesn't exist
+    await fs.promises.mkdir(path.dirname(tempPath), { recursive: true });
+
+    // Copy file
+    await fs.promises.copyFile(normalizedSource, tempPath);
+    
+    return tempPath;
+  } catch (error) {
+    console.error(`Error copying file: ${error}`);
+    throw error;
+  }
 }
 
 // Function to ensure directory exists
 async function ensureDirectoryExists(dirPath: string): Promise<void> {
-  const normalizedPath = normalizeFilePath(dirPath);
-  if (!fs.existsSync(normalizedPath)) {
-    fs.mkdirSync(normalizedPath, { recursive: true });
+  try {
+    await fs.promises.mkdir(dirPath, { recursive: true });
+  } catch (error) {
+    console.error(`Failed to create directory ${dirPath}:`, error);
+    throw error;
   }
 }
 
@@ -86,14 +100,9 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             minimum: 1,
             maximum: 4
           },
-          outputDir: {
-            type: "string",
-            description: "Directory to save generated images",
-            default: "G:\\image-gen3-google-mcp-server\\images"
-          },
           subDir: {
             type: "string",
-            description: "Subdirectory within outputDir to save images",
+            description: "Optional subdirectory within 'images' folder to save images",
             default: ""
           }
         },
@@ -120,11 +129,6 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             type: "number",
             description: "Image height in pixels",
             default: 512
-          },
-          useTemp: {
-            type: "boolean",
-            description: "Whether to copy images to a temp directory",
-            default: true
           }
         },
         required: ["imagePaths"]
@@ -140,20 +144,20 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const args = request.params.arguments as {
         prompt: string;
         numberOfImages?: number;
-        outputDir?: string;
         subDir?: string;
       };
       const { 
         prompt, 
-        numberOfImages = 1, 
-        outputDir = "G:\\image-gen3-google-mcp-server\\images",
+        numberOfImages = 1,
         subDir = ""
       } = args;
       
+      // Create images directory in current working directory
+      const baseDir = path.join(process.cwd(), 'images');
+      const outputDir = subDir ? path.join(baseDir, subDir) : baseDir;
+      
       // Ensure output directory exists
-      const baseDir = normalizeFilePath(outputDir);
-      const fullOutputDir = subDir ? path.join(baseDir, subDir) : baseDir;
-      await ensureDirectoryExists(fullOutputDir);
+      await ensureDirectoryExists(outputDir);
 
       const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
@@ -186,18 +190,18 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         // Create filename with timestamp and sanitized prompt
         const sanitizedPrompt = prompt.toLowerCase().replace(/[^a-z0-9]/g, '-').slice(0, 30);
         const filename = path.join(
-          fullOutputDir,
+          outputDir,
           `${sanitizedPrompt}-${timestamp}-${idx}.png`
         );
         
-        fs.writeFileSync(filename, buffer);
+        await fs.promises.writeFile(filename, buffer);
         generatedFiles.push(filename);
         idx++;
       }
 
       return {
         toolResult: {
-          message: `Successfully generated ${generatedFiles.length} images`,
+          message: `Successfully generated ${generatedFiles.length} images in ${outputDir}`,
           files: generatedFiles
         }
       };
@@ -213,32 +217,22 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         imagePaths: string[];
         width?: number;
         height?: number;
-        useTemp?: boolean;
       };
-      const { imagePaths, width = 512, height = 512, useTemp = true } = args;
+      const { imagePaths, width = 512, height = 512 } = args;
 
-      let tempDir: string | null = null;
-      let tempPaths: string[] = [];
-
-      if (useTemp) {
-        // Create temp directory and copy images
-        tempDir = await createTempImageDir();
-        tempPaths = await Promise.all(
-          imagePaths.map(imagePath => copyToTemp(normalizeFilePath(imagePath), tempDir!))
-        );
-      }
-
-      const htmlTags = (useTemp ? tempPaths : imagePaths).map(imagePath => {
-        const normalizedPath = normalizeFilePath(imagePath);
+      const htmlTags = imagePaths.map(imagePath => {
+        // Normalize the path and make it absolute if relative
+        const normalizedPath = path.isAbsolute(imagePath) 
+          ? normalizeFilePath(imagePath)
+          : path.resolve(process.cwd(), normalizeFilePath(imagePath));
+        
         return `<img src="file://${normalizedPath}" width="${width}" height="${height}" alt="Generated image" style="margin: 10px;" />`;
       });
 
       return {
         toolResult: {
           html: htmlTags.join('\n'),
-          message: `Created HTML tags for ${imagePaths.length} images`,
-          tempDir: tempDir,
-          tempPaths: tempPaths
+          message: `Created HTML tags for ${imagePaths.length} images`
         }
       };
     } catch (error) {
