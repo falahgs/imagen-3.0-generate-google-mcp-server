@@ -1,5 +1,6 @@
 # Gemini Imagen 3.0 MCP Server
 
+[![smithery badge](https://smithery.ai/badge/@falahgs/imagen-3-0-generate-google-mcp-server)](https://smithery.ai/server/@falahgs/imagen-3-0-generate-google-mcp-server)
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Node](https://img.shields.io/badge/node-%3E%3D18.0.0-brightgreen)
 ![TypeScript](https://img.shields.io/badge/typescript-%5E5.3.3-blue)
@@ -22,6 +23,14 @@ A professional Model Context Protocol (MCP) server implementation that harnesses
 - Node.js 18 or higher
 - Google Gemini API key
 - Claude Desktop or another MCP-compatible host
+
+### Installing via Smithery
+
+To install gemini-imagen-3-0-generate-google-mcp-server for Claude Desktop automatically via [Smithery](https://smithery.ai/server/@falahgs/imagen-3-0-generate-google-mcp-server):
+
+```bash
+npx -y @smithery/cli install @falahgs/imagen-3-0-generate-google-mcp-server --client claude
+```
 
 ### Installation
 
